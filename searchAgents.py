@@ -289,20 +289,33 @@ class CornersProblem(search.SearchProblem):
         # in initializing the problem
         "*** YOUR CODE HERE ***"
 
+        # Asocia cada esquina con un bit para registrar cuáles fueron visitadas.
+        self.cornerIndices = {corner: index for index, corner in enumerate(self.corners)}
+
+        # Representa el estado en el que las cuatro esquinas ya fueron visitadas.
+        self.goalMask = (1 << len(self.corners)) - 1
+
     def getStartState(self):
         """
         Returns the start state (in your state space, not the full Pacman state
         space)
         """
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+
+        # Registra la esquina inicial si Pacman comienza ubicado sobre una de ellas.
+        visitedMask = 0
+        if self.startingPosition in self.cornerIndices:
+            visitedMask |= 1 << self.cornerIndices[self.startingPosition]
+        return (self.startingPosition, visitedMask)
 
     def isGoalState(self, state):
         """
         Returns whether this search state is a goal state of the problem.
         """
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+
+        # El objetivo se alcanza cuando fueron visitadas las cuatro esquinas.
+        return state[1] == self.goalMask
 
     def getSuccessors(self, state):
         """
@@ -325,6 +338,22 @@ class CornersProblem(search.SearchProblem):
             #   hitsWall = self.walls[nextx][nexty]
 
             "*** YOUR CODE HERE ***"
+
+            # Calcula la posición alcanzada mediante la acción actual.
+            currentPosition, visitedMask = state
+            x, y = currentPosition
+            dx, dy = Actions.directionToVector(action)
+            nextx, nexty = int(x + dx), int(y + dy)
+
+            # Agrega el sucesor si el movimiento no atraviesa una pared.
+            if not self.walls[nextx][nexty]:
+                nextPosition = (nextx, nexty)
+                nextVisitedMask = visitedMask
+
+                # Registra la esquina cuando la nueva posición coincide con una.
+                if nextPosition in self.cornerIndices:
+                    nextVisitedMask |= 1 << self.cornerIndices[nextPosition]
+                successors.append(((nextPosition, nextVisitedMask), action, 1))
 
         self._expanded += 1 # DO NOT CHANGE
         return successors
@@ -360,7 +389,35 @@ def cornersHeuristic(state, problem):
     walls = problem.walls # These are the walls of the maze, as a Grid (game.py)
 
     "*** YOUR CODE HERE ***"
-    return 0 # Default to trivial solution
+
+    # Obtiene las esquinas que todavía no fueron visitadas.
+    position, visitedMask = state
+    unvisitedCorners = [
+        corner for corner in corners
+        if not visitedMask & (1 << problem.cornerIndices[corner])
+    ]
+
+    if not unvisitedCorners:
+        return 0
+
+    # Estima la distancia desde Pacman hasta la esquina pendiente más cercana.
+    heuristic = min(util.manhattanDistance(position, corner) for corner in unvisitedCorners)
+
+    # Conecta las esquinas pendientes mediante un árbol de expansión mínima.
+    connected = {unvisitedCorners[0]}
+    remaining = set(unvisitedCorners[1:])
+
+    while remaining:
+        distance, nextCorner = min(
+            (util.manhattanDistance(source, target), target)
+            for source in connected
+            for target in remaining
+        )
+        heuristic += distance
+        connected.add(nextCorner)
+        remaining.remove(nextCorner)
+
+    return heuristic
 
 class AStarCornersAgent(SearchAgent):
     "A SearchAgent for FoodSearchProblem using A* and your foodHeuristic"
@@ -452,9 +509,42 @@ def foodHeuristic(state, problem):
     Subsequent calls to this heuristic can access
     problem.heuristicInfo['wallCount']
     """
-    position, foodGrid = state
     "*** YOUR CODE HERE ***"
-    return 0
+
+    # Obtiene las posiciones que todavía contienen comida.
+    position, foodGrid = state
+    foodPositions = foodGrid.asList()
+    if not foodPositions:
+        return 0
+
+    # Conserva los mapas de distancias para reutilizarlos en llamadas posteriores.
+    distanceMaps = problem.heuristicInfo.setdefault('foodDistanceMaps', {})
+
+    for foodPosition in foodPositions:
+        if foodPosition not in distanceMaps:
+            # Calcula mediante BFS la distancia desde una comida a todas las posiciones.
+            distances = {foodPosition: 0}
+            frontier = util.Queue()
+            frontier.push(foodPosition)
+
+            while not frontier.isEmpty():
+                current = frontier.pop()
+                currentDistance = distances[current]
+                x, y = current
+
+                for action in [Directions.NORTH, Directions.SOUTH, Directions.EAST, Directions.WEST]:
+                    dx, dy = Actions.directionToVector(action)
+                    nextPosition = (int(x + dx), int(y + dy))
+                    nextx, nexty = nextPosition
+
+                    if not problem.walls[nextx][nexty] and nextPosition not in distances:
+                        distances[nextPosition] = currentDistance + 1
+                        frontier.push(nextPosition)
+
+            distanceMaps[foodPosition] = distances
+
+    # Usa como estimación la distancia real hasta la comida más lejana.
+    return max(distanceMaps[foodPosition][position] for foodPosition in foodPositions)
 
 class ClosestDotSearchAgent(SearchAgent):
     "Search for all food using a sequence of searches"
@@ -485,7 +575,9 @@ class ClosestDotSearchAgent(SearchAgent):
         problem = AnyFoodSearchProblem(gameState)
 
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+
+        # BFS devuelve el camino más corto hasta cualquier posición con comida.
+        return search.breadthFirstSearch(problem)
 
 class AnyFoodSearchProblem(PositionSearchProblem):
     """
@@ -521,7 +613,9 @@ class AnyFoodSearchProblem(PositionSearchProblem):
         x,y = state
 
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+
+        # Una posición es objetivo cuando contiene comida.
+        return self.food[x][y]
 
 def mazeDistance(point1, point2, gameState):
     """
